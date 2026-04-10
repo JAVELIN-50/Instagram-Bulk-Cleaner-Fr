@@ -1,0 +1,226 @@
+// ==== TIMING (ajuste si besoin) ====
+const MAX_POPUP_WAIT = 5000;
+const POPUP_POLL_INTERVAL = 200;
+const WAIT_AFTER_UNLIKE = 12000;
+const TIME_AFTER_SELECT = 400;
+const BATCH_SIZE = 15;
+const TIME_BETWEEN_SELECTIONS = 150;
+
+// Stop global — tape stopAuto = true dans la console pour arrêter
+window.stopAuto = false;
+
+// Textes EN et FR supportés
+const SELECT_TEXTS   = ["Select", "Sélectionner"];
+const UNLIKE_TEXTS   = ["Unlike", "Je n'aime plus", "Remove Like"];
+
+const SELECT_TOGGLE_SELECTOR = 'span[data-bloks-name="bk.components.Text"]';
+const TEXTSPAN_SELECTOR      = 'span[data-bloks-name="bk.components.TextSpan"]';
+
+// Sélecteur des cases à cocher (likes)
+const CHECKBOX_SELECTOR = '[aria-label="Toggle checkbox"], [data-testid="bulk_action_checkbox"]';
+
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+function isVisible(el) {
+  const rect = el.getBoundingClientRect();
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.top < window.innerHeight &&
+    rect.bottom > 0
+  );
+}
+
+// Clique sur "Sélectionner" / "Select"
+async function clickSelectIfVisible() {
+  const spans = Array.from(document.querySelectorAll(SELECT_TOGGLE_SELECTOR))
+    .filter(el => SELECT_TEXTS.includes(el.textContent.trim()));
+
+  for (const span of spans) {
+    if (!isVisible(span)) continue;
+    try {
+      span.click();
+      console.log("▶ Cliqué sur Sélectionner");
+      await delay(TIME_AFTER_SELECT);
+      return true;
+    } catch (e) {
+      console.log("⚠ Échec du clic sur Sélectionner :", e);
+    }
+  }
+
+  // Fallback : cherche dans tous les spans
+  const allSpans = Array.from(document.querySelectorAll("span"))
+    .filter(el => SELECT_TEXTS.includes(el.textContent.trim()));
+  for (const span of allSpans) {
+    if (!isVisible(span)) continue;
+    try {
+      (span.parentElement || span).click();
+      console.log("▶ Cliqué sur Sélectionner (fallback)");
+      await delay(TIME_AFTER_SELECT);
+      return true;
+    } catch (e) {}
+  }
+
+  return false;
+}
+
+// Récupère les cases à cocher visibles
+function getVisibleCheckboxes() {
+  // Méthode 1 : aria-label
+  let boxes = Array.from(document.querySelectorAll(CHECKBOX_SELECTOR))
+    .filter(el => isVisible(el));
+
+  // Méthode 2 : fallback sur role="checkbox"
+  if (boxes.length === 0) {
+    boxes = Array.from(document.querySelectorAll('[role="checkbox"]'))
+      .filter(el => isVisible(el));
+  }
+
+  return boxes.slice(0, BATCH_SIZE);
+}
+
+function countVisibleCheckboxes() {
+  return Array.from(document.querySelectorAll(CHECKBOX_SELECTOR))
+    .filter(el => isVisible(el)).length;
+}
+
+// Bouton "Je n'aime plus" / "Unlike" en bas de page
+function getBulkUnlikeButton() {
+  // Méthode 1 : TextSpan bloks
+  const labels = Array.from(document.querySelectorAll(TEXTSPAN_SELECTOR))
+    .filter(el => UNLIKE_TEXTS.includes(el.textContent.trim()));
+
+  for (const label of labels) {
+    if (label.closest('div._a9-v')) continue;
+    if (!isVisible(label)) continue;
+
+    let clickable =
+      label.closest('button, [role="button"], [tabindex]') ||
+      label.parentElement;
+
+    if (!clickable || !isVisible(clickable)) continue;
+
+    const rect = clickable.getBoundingClientRect();
+    if (rect.top < window.innerHeight * 0.4) continue;
+
+    return clickable;
+  }
+
+  // Méthode 2 : tous les boutons/spans visibles en bas
+  const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+  for (const btn of allButtons) {
+    const txt = btn.innerText && btn.innerText.trim();
+    if (txt && UNLIKE_TEXTS.some(u => txt.startsWith(u))) {
+      if (!isVisible(btn)) continue;
+      const rect = btn.getBoundingClientRect();
+      if (rect.top < window.innerHeight * 0.4) continue;
+      return btn;
+    }
+  }
+
+  // Méthode 3 : cherche dans tous les spans
+  const allSpans = Array.from(document.querySelectorAll("span"));
+  for (const span of allSpans) {
+    if (!UNLIKE_TEXTS.includes(span.textContent.trim())) continue;
+    if (!isVisible(span)) continue;
+    const rect = span.getBoundingClientRect();
+    if (rect.top < window.innerHeight * 0.4) continue;
+    const clickable = span.closest('button, [role="button"]') || span.parentElement;
+    if (clickable && isVisible(clickable)) return clickable;
+  }
+
+  return null;
+}
+
+// Popup de confirmation "Je n'aime plus" / "Unlike"
+function getPopupUnlikeButton() {
+  const selectors = ['div._a9-v button', '[role="dialog"] button'];
+  for (const sel of selectors) {
+    const buttons = document.querySelectorAll(sel);
+    for (const btn of buttons) {
+      const txt = btn.innerText && btn.innerText.trim();
+      if (txt && UNLIKE_TEXTS.some(u => txt.startsWith(u))) return btn;
+    }
+  }
+  return null;
+}
+
+async function waitForPopupUnlike() {
+  const start = Date.now();
+  while (Date.now() - start < MAX_POPUP_WAIT) {
+    const btn = getPopupUnlikeButton();
+    if (btn) return btn;
+    await delay(POPUP_POLL_INTERVAL);
+  }
+  return null;
+}
+
+async function unlikeLoop() {
+  console.log("▶ Démarrage. Va sur : instagram.com/your_activity/interactions/likes");
+  console.log("▶ Sélectionner → jusqu'à 15 likes → Je n'aime plus → attente.");
+
+  while (!window.stopAuto) {
+    await clickSelectIfVisible();
+
+    const batch = getVisibleCheckboxes();
+    if (batch.length === 0) {
+      console.log("✔ Aucun like visible à traiter. Terminé !");
+      break;
+    }
+
+    console.log(`✅ Sélection de ${batch.length} like(s) dans ce lot.`);
+
+    for (const box of batch) {
+      try {
+        box.click();
+        await delay(TIME_BETWEEN_SELECTIONS);
+      } catch (e) {
+        console.log("⚠ Échec du clic sur la case :", e);
+      }
+    }
+
+    const unlikeBtn = getBulkUnlikeButton();
+    if (!unlikeBtn) {
+      console.log("⚠ Bouton 'Je n'aime plus' introuvable en bas de page. Arrêt.");
+      console.log("💡 Essaie de relancer : stopAuto = false; unlikeLoop();");
+      break;
+    }
+
+    try {
+      unlikeBtn.click();
+      console.log("▶ Cliqué sur 'Je n'aime plus' (bas de page).");
+    } catch (e) {
+      console.log("⚠ Échec du clic :", e);
+      break;
+    }
+
+    const popupBtn = await waitForPopupUnlike();
+    if (popupBtn) {
+      try {
+        popupBtn.click();
+        console.log("💔 Confirmation dans la popup.");
+      } catch (e) {
+        console.log("⚠ Échec du clic popup (on continue quand même).", e);
+      }
+    } else {
+      console.log("ℹ Pas de popup — action sans confirmation.");
+    }
+
+    console.log(`⏳ Attente de ${WAIT_AFTER_UNLIKE / 1000}s avant le prochain lot...`);
+    await delay(WAIT_AFTER_UNLIKE);
+
+    const remaining = countVisibleCheckboxes();
+    console.log(`👀 Cases visibles restantes : ${remaining}`);
+
+    if (window.stopAuto) {
+      console.log("⛔ Arrêté manuellement.");
+      break;
+    }
+  }
+
+  console.log("⏹ Terminé. Pour relancer : stopAuto = false; unlikeLoop();");
+}
+
+unlikeLoop();
