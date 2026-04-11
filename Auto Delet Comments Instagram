@@ -1,0 +1,202 @@
+// ==== TIMING (ajuste si besoin) ====
+const MAX_POPUP_WAIT = 5000;
+const POPUP_POLL_INTERVAL = 200;
+const WAIT_AFTER_DELETE = 12000;
+const TIME_AFTER_SELECT = 400;
+const BATCH_SIZE = 15;
+const TIME_BETWEEN_SELECTIONS = 150;
+
+// Stop global
+window.stopAuto = false;
+
+// Sélecteur du cercle de sélection
+const CIRCLE_SELECTOR =
+  'div[data-bloks-name="ig.components.Icon"][style*="circle__outline__24-4x.png"]';
+
+const SELECT_TOGGLE_SELECTOR =
+  'span[data-bloks-name="bk.components.Text"]';
+
+const TEXTSPAN_SELECTOR =
+  'span[data-bloks-name="bk.components.TextSpan"]';
+
+// Textes EN et FR supportés
+const SELECT_TEXTS = ["Select", "Sélectionner"];
+const DELETE_TEXTS = ["Delete", "Supprimer"];
+
+function delay(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+function isVisible(el) {
+  const rect = el.getBoundingClientRect();
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    rect.top < window.innerHeight &&
+    rect.bottom > 0
+  );
+}
+
+async function clickSelectIfVisible() {
+  const spans = Array.from(document.querySelectorAll(SELECT_TOGGLE_SELECTOR))
+    .filter(el => SELECT_TEXTS.includes(el.textContent.trim()));
+
+  for (const span of spans) {
+    if (!isVisible(span)) continue;
+    try {
+      span.click();
+      console.log("▶ Cliqué sur Sélectionner");
+      await delay(TIME_AFTER_SELECT);
+      return true;
+    } catch (e) {
+      console.log("⚠ Échec du clic sur Sélectionner :", e);
+    }
+  }
+  return false;
+}
+
+function getVisibleCircleBatch() {
+  const circles = Array.from(document.querySelectorAll(CIRCLE_SELECTOR))
+    .filter(el => isVisible(el));
+  return circles.slice(0, BATCH_SIZE);
+}
+
+function countVisibleCircles() {
+  return Array.from(document.querySelectorAll(CIRCLE_SELECTOR))
+    .filter(el => isVisible(el)).length;
+}
+
+function getBulkDeleteButton() {
+  const deleteLabels = Array.from(
+    document.querySelectorAll(TEXTSPAN_SELECTOR)
+  ).filter(el => DELETE_TEXTS.includes(el.textContent.trim()));
+
+  for (const label of deleteLabels) {
+    if (label.closest('div._a9-v')) continue;
+    if (!isVisible(label)) continue;
+
+    let clickable =
+      label.closest('button, [role="button"], [tabindex]') ||
+      label.parentElement;
+
+    if (!clickable) continue;
+    if (!isVisible(clickable)) continue;
+
+    const rect = clickable.getBoundingClientRect();
+    if (rect.top < window.innerHeight * 0.4) continue;
+
+    return clickable;
+  }
+
+  // Fallback : cherche directement le bouton "Supprimer" en bas de page
+  const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+  for (const btn of allButtons) {
+    const txt = btn.innerText && btn.innerText.trim();
+    if (txt && DELETE_TEXTS.some(d => txt.startsWith(d))) {
+      if (!isVisible(btn)) continue;
+      const rect = btn.getBoundingClientRect();
+      if (rect.top < window.innerHeight * 0.4) continue;
+      return btn;
+    }
+  }
+
+  return null;
+}
+
+function getPopupDeleteButton() {
+  // Popup standard
+  const buttons = document.querySelectorAll('div._a9-v button');
+  for (const btn of buttons) {
+    const txt = btn.innerText && btn.innerText.trim();
+    if (txt && DELETE_TEXTS.some(d => txt.startsWith(d))) {
+      return btn;
+    }
+  }
+
+  // Fallback : tous les boutons dans une dialog/popup
+  const dialogs = document.querySelectorAll('[role="dialog"] button');
+  for (const btn of dialogs) {
+    const txt = btn.innerText && btn.innerText.trim();
+    if (txt && DELETE_TEXTS.some(d => txt.startsWith(d))) {
+      return btn;
+    }
+  }
+
+  return null;
+}
+
+async function waitForPopupDelete() {
+  const start = Date.now();
+  while (Date.now() - start < MAX_POPUP_WAIT) {
+    const btn = getPopupDeleteButton();
+    if (btn) return btn;
+    await delay(POPUP_POLL_INTERVAL);
+  }
+  return null;
+}
+
+async function deleteLoop() {
+  console.log("▶ Démarrage. Sélectionner → jusqu'à 15 commentaires → Supprimer → attente.");
+
+  while (!window.stopAuto) {
+    await clickSelectIfVisible();
+
+    let batch = getVisibleCircleBatch();
+    if (batch.length === 0) {
+      console.log("✔ Aucun commentaire visible à traiter. Terminé.");
+      break;
+    }
+
+    console.log(`✅ Sélection de ${batch.length} commentaire(s) dans ce lot.`);
+
+    for (const circle of batch) {
+      try {
+        circle.click();
+        await delay(TIME_BETWEEN_SELECTIONS);
+      } catch (e) {
+        console.log("⚠ Échec du clic sur le cercle :", e);
+      }
+    }
+
+    const bulkDeleteBtn = getBulkDeleteButton();
+    if (!bulkDeleteBtn) {
+      console.log("⚠ Bouton Supprimer (bas de page) introuvable. Arrêt.");
+      break;
+    }
+
+    try {
+      bulkDeleteBtn.click();
+      console.log("▶ Cliqué sur Supprimer (bas de page).");
+    } catch (e) {
+      console.log("⚠ Échec du clic sur Supprimer :", e);
+      break;
+    }
+
+    const popupDelete = await waitForPopupDelete();
+    if (popupDelete) {
+      try {
+        popupDelete.click();
+        console.log("🗑 Confirmation de suppression dans la popup.");
+      } catch (e) {
+        console.log("⚠ Échec du clic sur la popup (on continue quand même).", e);
+      }
+    } else {
+      console.log("ℹ Pas de popup détectée — suppression sans confirmation.");
+    }
+
+    console.log(`⏳ Attente de ${WAIT_AFTER_DELETE / 1000}s avant le prochain lot...`);
+    await delay(WAIT_AFTER_DELETE);
+
+    const remainingVisible = countVisibleCircles();
+    console.log(`👀 Cercles visibles après suppression : ${remainingVisible}`);
+
+    if (window.stopAuto) {
+      console.log("⛔ Arrêté manuellement.");
+      break;
+    }
+  }
+
+  console.log("⏹ Terminé. Pour relancer : stopAuto = false; deleteLoop();");
+}
+
+deleteLoop();
