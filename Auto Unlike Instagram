@@ -11,7 +11,7 @@ window.stopAuto = false;
 
 // Textes EN et FR supportés
 const SELECT_TEXTS   = ["Select", "Sélectionner"];
-const UNLIKE_TEXTS   = ["Unlike", "Je n'aime plus", "Remove Like"];
+const UNLIKE_TEXTS   = ["Unlike", "Je n'aime plus", "Remove Like","Je","n'aime","plus"];
 
 const SELECT_TOGGLE_SELECTOR = 'span[data-bloks-name="bk.components.Text"]';
 const TEXTSPAN_SELECTOR      = 'span[data-bloks-name="bk.components.TextSpan"]';
